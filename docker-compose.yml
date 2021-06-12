@@ -49,58 +49,58 @@ services:
   # of the cluster, and perform administrative actions without using
   # the native Kafka protocol or clients.
   # https://github.com/confluentinc/kafka-rest
-  kafka-rest-proxy:
-    image: confluentinc/cp-kafka-rest:4.1.2
-    hostname: kafka-rest-proxy
-    ports:
-      - "8082:8082"
-    environment:
-      # Specifies the ZooKeeper connection string. This service connects
-      # to ZooKeeper so that it can broadcast its endpoints as well as
-      # react to the dynamic topology of the Kafka cluster.
-      KAFKA_REST_ZOOKEEPER_CONNECT: zookeeper:2181
-      # The address on which Kafka REST will listen for API requests.
-      KAFKA_REST_LISTENERS: http://0.0.0.0:8082/
-      # Required. This is the hostname used to generate absolute URLs in responses.
-      # It defaults to the Java canonical hostname for the container, which might
-      # not be resolvable in a Docker environment.
-      KAFKA_REST_HOST_NAME: kafka-rest-proxy
-      # The list of Kafka brokers to connect to. This is only used for bootstrapping,
-      # the addresses provided here are used to initially connect to the cluster,
-      # after which the cluster will dynamically change. Thanks, ZooKeeper!
-      KAFKA_REST_BOOTSTRAP_SERVERS: kafka:9092
-    # Kafka REST relies upon Kafka, ZooKeeper, and Schema Registry.
-    # This will instruct docker to wait until those services are up
-    # before attempting to start Kafka REST.
-    depends_on:
-      - zookeeper
-      - kafka
+#  kafka-rest-proxy:
+#    image: confluentinc/cp-kafka-rest:4.1.2
+#    hostname: kafka-rest-proxy
+#    ports:
+#      - "8082:8082"
+#    environment:
+#      # Specifies the ZooKeeper connection string. This service connects
+#      # to ZooKeeper so that it can broadcast its endpoints as well as
+#      # react to the dynamic topology of the Kafka cluster.
+#      KAFKA_REST_ZOOKEEPER_CONNECT: zookeeper:2181
+#      # The address on which Kafka REST will listen for API requests.
+#      KAFKA_REST_LISTENERS: http://0.0.0.0:8082/
+#      # Required. This is the hostname used to generate absolute URLs in responses.
+#      # It defaults to the Java canonical hostname for the container, which might
+#      # not be resolvable in a Docker environment.
+#      KAFKA_REST_HOST_NAME: kafka-rest-proxy
+#      # The list of Kafka brokers to connect to. This is only used for bootstrapping,
+#      # the addresses provided here are used to initially connect to the cluster,
+#      # after which the cluster will dynamically change. Thanks, ZooKeeper!
+#      KAFKA_REST_BOOTSTRAP_SERVERS: kafka:9092
+#    # Kafka REST relies upon Kafka, ZooKeeper, and Schema Registry.
+#    # This will instruct docker to wait until those services are up
+#    # before attempting to start Kafka REST.
+#    depends_on:
+#      - zookeeper
+#      - kafka
+#
+#  # Browse Kafka topics and understand what's happening on your cluster.
+#  # Find topics / view topic metadata / browse topic data
+#  # (kafka messages) / view topic configuration / download data.
+#  # https://github.com/Landoop/kafka-topics-ui
+#  kafka-topics-ui:
+#    image: landoop/kafka-topics-ui:0.9.3
+#    hostname: kafka-topics-ui
+#    ports:
+#      - "8000:8000"
+#    environment:
+#      # Required. Instructs the UI where it can find the Kafka REST Proxy.
+#      KAFKA_REST_PROXY_URL: "http://kafka-rest-proxy:8082/"
+#      # This instructs the docker image to use Caddy to proxy traffic to kafka-topics-ui.
+#      PROXY: "true"
+#    # kafka-topics-ui relies upon Kafka REST.
+#    # This will instruct docker to wait until those services are up
+#    # before attempting to start kafka-topics-ui.
+#    depends_on:
+#      - kafka-rest-proxy
 
-  # Browse Kafka topics and understand what's happening on your cluster.
-  # Find topics / view topic metadata / browse topic data
-  # (kafka messages) / view topic configuration / download data.
-  # https://github.com/Landoop/kafka-topics-ui
-  kafka-topics-ui:
-    image: landoop/kafka-topics-ui:0.9.3
-    hostname: kafka-topics-ui
-    ports:
-      - "8000:8000"
-    environment:
-      # Required. Instructs the UI where it can find the Kafka REST Proxy.
-      KAFKA_REST_PROXY_URL: "http://kafka-rest-proxy:8082/"
-      # This instructs the docker image to use Caddy to proxy traffic to kafka-topics-ui.
-      PROXY: "true"
-    # kafka-topics-ui relies upon Kafka REST.
-    # This will instruct docker to wait until those services are up
-    # before attempting to start kafka-topics-ui.
-    depends_on:
-      - kafka-rest-proxy
-
-  kafkacat:
-    image: confluentinc/cp-kafkacat:5.4.3
-    depends_on:
-      - zookeeper
-      - kafka
-    init: true
-    entrypoint: sh
-    command: -c "echo Sleeping...; sleep infinity;"
+#  kafkacat:
+#    image: confluentinc/cp-kafkacat:5.4.3
+#    depends_on:
+#      - zookeeper
+#      - kafka
+#    init: true
+#    entrypoint: sh
+#    command: -c "echo Sleeping...; sleep infinity;"
