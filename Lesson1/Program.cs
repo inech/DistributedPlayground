@@ -10,7 +10,7 @@ using Shared;
 
 Console.WriteLine("Program started");
 
-await ConsumeAsync(SharedConstants.TopicName, DateTime.UtcNow.ToFileTimeUtc().ToString(), 20);
+await ConsumeAsync(SharedConstants.TopicName, DateTime.UtcNow.ToFileTimeUtc().ToString(), 10);
 
 Console.WriteLine("Program Finished");
 
@@ -133,7 +133,7 @@ internal class Distributor
 
     public Distributor(int concurrency)
     {
-        _actors = Enumerable.Range(0, concurrency).Select(_ => new Actor(_offsetManager)).ToArray();
+        _actors = Enumerable.Range(0, concurrency).Select(i => new Actor(_offsetManager, i)).ToArray();
     }
 
     public void Distribute(KafkaAccountOperation kafkaAccountOperation)
@@ -182,7 +182,7 @@ internal class Distributor
         {
             kafkaConsumer.StoreOffset(new TopicPartitionOffset(topicName, new Partition(0), offsetToCommit.Value)); // TODO: Only single partition
 
-            Console.WriteLine($"[Verbose] Store offset ({offsetToCommit})");
+            Console.WriteLine($"[{DateTime.UtcNow:hh:mm:ss:fff}] [Verbose] Store offset ({offsetToCommit:000000})");
         }
         
         _informationLastStoredOffset = offsetToCommit;
@@ -212,14 +212,16 @@ internal class Distributor
 internal class Actor
 {
     private readonly OffsetManager _offsetManager;
+    private readonly int _actorIndex;
     private readonly Dictionary<long, User> _users = new();
     private readonly ConcurrentQueue<KafkaAccountOperation> _operationsQueue = new();
     private readonly CancellationTokenSource _cancellationTokenSource = new();
     private Task? _runningTask;
 
-    public Actor(OffsetManager offsetManager)
+    public Actor(OffsetManager offsetManager, int actorIndex)
     {
         _offsetManager = offsetManager;
+        _actorIndex = actorIndex;
     }
     
     public void EnqueueOperation(KafkaAccountOperation kafkaAccountOperation)
@@ -276,7 +278,7 @@ internal class Actor
             _users[kafkaAccountOperation.UserId] = user = new User();
         }
 
-        user.UpdateBalance(kafkaAccountOperation);
+        user.UpdateBalance(kafkaAccountOperation, _actorIndex);
         
         _offsetManager.MessageProcessed(kafkaAccountOperation.Offset);
     }
@@ -307,7 +309,7 @@ internal class User
     public UserBalance Balance { get; private set; } = new (0, -1);
 
     // Returns last offset
-    public void UpdateBalance(KafkaAccountOperation kafkaAccountOperation)
+    public void UpdateBalance(KafkaAccountOperation kafkaAccountOperation, int actorIndex)
     {
         if (kafkaAccountOperation.Offset > Balance.KafkaOffset)
         {
@@ -323,7 +325,7 @@ internal class User
             
             Balance = new UserBalance(kafkaAccountOperation.Operation.SequenceNumber, kafkaAccountOperation.Offset);
             
-            Console.WriteLine($"[Verbose] Processed U({kafkaAccountOperation.UserId}) SN({kafkaAccountOperation.Operation.SequenceNumber}) KafkaOffset({kafkaAccountOperation.Offset})");
+            Console.WriteLine($"[{DateTime.UtcNow:hh:mm:ss:fff}] [Verbose] Processed Actor({actorIndex:000}) U({kafkaAccountOperation.UserId:000}) SN({kafkaAccountOperation.Operation.SequenceNumber:000}) KafkaOffset({kafkaAccountOperation.Offset:000000})");
         }
         else
         {
