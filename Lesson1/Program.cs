@@ -44,7 +44,7 @@ static async Task ConsumeAsync(string topicName, string groupId, int concurrency
         var result = consumer.Consume();
         if (result.IsPartitionEOF)
         {
-            Console.WriteLine("End of partition reached");
+            Console.WriteLine("Consumed all messages");
             break;
         }
         
@@ -52,6 +52,7 @@ static async Task ConsumeAsync(string topicName, string groupId, int concurrency
         distributor.Distribute(operation);
     }
     
+    Console.WriteLine("Waiting to finish processing and stop gracefully...");
     await distributor.StopGracefullyAsync();
     
     consumer.Close();
