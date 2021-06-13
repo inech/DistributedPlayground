@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Diagnostics;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Confluent.Kafka;
@@ -72,13 +73,19 @@ static async Task EmptyTopicAsync(string topicName)
         .Build();
 
     Console.WriteLine("Starting emptying topic");
-    // TODO: Implement emptying all partitions
-    var topicOffsetPartition = new TopicPartitionOffset(topicName, 0, Offset.End);
-    await adminClient.DeleteRecordsAsync(new[] {topicOffsetPartition}, new DeleteRecordsOptions
-    {
-        OperationTimeout = TimeSpan.FromSeconds(5),
-         RequestTimeout= TimeSpan.FromSeconds(5)
-    });
 
+    var clusterMetadata = adminClient.GetMetadata(topicName, TimeSpan.FromSeconds(10));
+    var topicMetadata = clusterMetadata.Topics.Single();
+    foreach (var partitionMetadata in topicMetadata.Partitions)
+    {
+        var topicOffsetPartition = new TopicPartitionOffset(topicName, partitionMetadata.PartitionId, Offset.End);
+        await adminClient.DeleteRecordsAsync(new[] {topicOffsetPartition}, new DeleteRecordsOptions
+        {
+            OperationTimeout = TimeSpan.FromSeconds(5),
+            RequestTimeout= TimeSpan.FromSeconds(5)
+        });
+        Console.WriteLine($"Emptied partition {partitionMetadata.PartitionId}");
+    }
+    
     Console.WriteLine("Topic emptied");
 }
