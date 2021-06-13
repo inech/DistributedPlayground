@@ -1,12 +1,46 @@
 ﻿using System;
+using System.Diagnostics;
+using Confluent.Kafka;
+using Shared;
 
-namespace Lesson1
+Console.WriteLine("Program started");
+
+Consume(SharedConstants.TopicName, DateTime.UtcNow.ToFileTimeUtc().ToString());
+
+static void Consume(string topicName, string groupId)
 {
-    class Program
+    var sw = Stopwatch.StartNew();
+    
+    var consumerConfig = new ConsumerConfig
     {
-        static void Main(string[] args)
+        BootstrapServers = SharedConstants.BootstrapServers,
+        GroupId = groupId,
+        AutoOffsetReset = AutoOffsetReset.Earliest
+    };
+
+    using var consumer = new ConsumerBuilder<long, AccountOperation>(consumerConfig)
+        .SetValueDeserializer(new JsonSerialization<AccountOperation>())
+        .SetErrorHandler((_, e) =>
         {
-            Console.WriteLine("Hello World!");
-        }
+            Console.WriteLine($"Error: {e.Reason}");
+        })
+        .Build();
+    consumer.Subscribe(topicName);
+
+    var messageCount = 0;
+    while (true)
+    {
+        var result = consumer.Consume();
+        messageCount++;
+        
+        var (userId, accountOperation) = (result.Message.Key, result.Message.Value);
+        Console.WriteLine($"#{messageCount}: U({userId}) SN({accountOperation.SequenceNumber})");
     }
+    
+    consumer.Close();
+
+    sw.Stop();
+    Console.WriteLine($"Consumed {messageCount} messages in {sw.Elapsed}");
 }
+
+

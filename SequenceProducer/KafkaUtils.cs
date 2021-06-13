@@ -6,8 +6,9 @@ using System.Threading;
 using System.Threading.Tasks;
 using Confluent.Kafka;
 using Confluent.Kafka.Admin;
+using Shared;
 
-namespace Shared
+namespace SequenceProducer
 {
     public static class KafkaUtils
     {
