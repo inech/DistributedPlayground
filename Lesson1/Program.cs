@@ -35,7 +35,7 @@ static async Task ConsumeAsync(string topicName, string groupId, int concurrency
     consumer.Subscribe(topicName);
 
     var distributor = new Distributor(concurrency);
-    distributor.StartProcessing();
+    distributor.StartProcessing(consumer, topicName);
 
     Console.WriteLine("Processing started");
     
@@ -62,13 +62,70 @@ static async Task ConsumeAsync(string topicName, string groupId, int concurrency
     Console.WriteLine($"Finished in {sw.Elapsed}");
 }
 
+internal class OffsetManager
+{
+    private readonly object _lock = new();
+    private readonly SortedSet<long> _unprocessedOffsets = new();
+    private long? _biggestProcessedOffset;
+    
+    public void MessageLoaded(long offset)
+    {
+        lock (_lock)
+        {
+            _unprocessedOffsets.Add(offset);
+        }
+    }
+
+    public void MessageProcessed(long offset)
+    {
+        lock (_lock)
+        {
+            _unprocessedOffsets.Remove(offset);
+
+            _biggestProcessedOffset = _biggestProcessedOffset == null
+                ? offset
+                : Math.Max(_biggestProcessedOffset.Value, offset);
+        }
+    }
+
+    // Returns offset which is safe to commit.
+    // All messages up to this point should be processed already.
+    public long? GetOffsetToCommit()
+    {
+        lock (_lock)
+        {
+            if (_unprocessedOffsets.Any())
+            {
+                return _unprocessedOffsets.First();
+            }
+            else
+            {
+                if (_biggestProcessedOffset != null)
+                {
+                   // All messages have been processed (including _biggestProcessedOffset)
+                   // so we can seek to the offset which is greater than biggest that we loaded.
+                   return _biggestProcessedOffset.Value + 1;
+                }
+                else
+                {
+                    // No messages have been loaded/processed so far.
+                    return null;
+                }
+            }
+        }
+    }
+}
+
 internal class Distributor
 {
     private readonly Actor[] _actors;
+    private readonly OffsetManager _offsetManager = new();
+    private readonly CancellationTokenSource _ctsStoreOffset = new();
+    private Task _storeOffsetTask;
 
     public Distributor(int concurrency)
     {
-        _actors = Enumerable.Range(0, concurrency).Select(_ => new Actor()).ToArray();
+        _actors = Enumerable.Range(0, concurrency).Select(_ => new Actor(_offsetManager)).ToArray();
     }
 
     public void Distribute(KafkaAccountOperation kafkaAccountOperation)
@@ -77,11 +134,45 @@ internal class Distributor
         _actors[actorIndex].EnqueueOperation(kafkaAccountOperation);
     }
 
-    public void StartProcessing()
+    public void StartProcessing(IConsumer<long, AccountOperation> kafkaConsumer, string topicName)
     {
+        _storeOffsetTask = Task.Factory.StartNew(
+            () => StoreOffsetLoop(kafkaConsumer, topicName),
+            TaskCreationOptions.LongRunning);
+        
         foreach (var actor in _actors)
         {
             actor.StartProcessing();
+        }
+    }
+
+    // TODO: Poor separation
+    private void StoreOffsetLoop(IConsumer<long, AccountOperation> kafkaConsumer, string topicName)
+    {
+        try
+        {
+            while (!_ctsStoreOffset.IsCancellationRequested)
+            {
+                StoreOffset(kafkaConsumer, topicName);
+                Thread.Sleep(TimeSpan.FromSeconds(1));
+            }
+        
+            // Store final time to avoid race conditions
+            StoreOffset(kafkaConsumer, topicName);
+        }
+        catch (Exception e)
+        {
+            Console.WriteLine($"StoreOffset crashed {e}");
+            throw;
+        }
+    }
+
+    private void StoreOffset(IConsumer<long, AccountOperation> kafkaConsumer, string topicName)
+    {
+        var offsetToCommit = _offsetManager.GetOffsetToCommit();
+        if (offsetToCommit != null)
+        {
+            kafkaConsumer.StoreOffset(new TopicPartitionOffset(topicName, new Partition(0), offsetToCommit.Value)); // TODO: Only single partition
         }
     }
 
@@ -91,6 +182,9 @@ internal class Distributor
             .Select(a => a.FinishQueueAndStopAsync())
             .ToArray()
         );
+
+        _ctsStoreOffset.Cancel();
+        await _storeOffsetTask;
     }
 
     public void PrintResult()
@@ -104,14 +198,23 @@ internal class Distributor
 
 internal class Actor
 {
+    private readonly OffsetManager _offsetManager;
     private readonly Dictionary<long, User> _users = new();
     private readonly ConcurrentQueue<KafkaAccountOperation> _operationsQueue = new();
     private readonly CancellationTokenSource _cancellationTokenSource = new();
     private Task? _runningTask;
 
-    public void EnqueueOperation(KafkaAccountOperation kafkaAccountOperation) => 
-        _operationsQueue.Enqueue(kafkaAccountOperation);
+    public Actor(OffsetManager offsetManager)
+    {
+        _offsetManager = offsetManager;
+    }
     
+    public void EnqueueOperation(KafkaAccountOperation kafkaAccountOperation)
+    {
+        _offsetManager.MessageLoaded(kafkaAccountOperation.Offset);
+        _operationsQueue.Enqueue(kafkaAccountOperation);
+    }
+
     public void StartProcessing()
     {
         _runningTask = Task.Factory.StartNew(ProcessLoop, TaskCreationOptions.LongRunning);
@@ -157,12 +260,8 @@ internal class Actor
         }
 
         user.UpdateBalance(kafkaAccountOperation);
-
-        // TODO: Remove pending offset
-        // lock (pendingOffsets)
-        // {
-        //     pendingOffsets.Remove(kafkaAccountOperation.Offset);
-        // }
+        
+        _offsetManager.MessageProcessed(kafkaAccountOperation.Offset);
     }
 
     public async Task FinishQueueAndStopAsync()
@@ -188,8 +287,9 @@ internal class Actor
 
 internal class User
 {
-    public UserBalance Balance { get; private set; } = new UserBalance(0, -1);
+    public UserBalance Balance { get; private set; } = new (0, -1);
 
+    // Returns last offset
     public void UpdateBalance(KafkaAccountOperation kafkaAccountOperation)
     {
         if (kafkaAccountOperation.Offset > Balance.KafkaOffset)
