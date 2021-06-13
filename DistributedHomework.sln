@@ -1,6 +1,6 @@
 ﻿
 Microsoft Visual Studio Solution File, Format Version 12.00
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Lesson1", "Lesson1\Lesson1.csproj", "{D009A15E-9923-48A8-8C59-B81CB9F9463B}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Consumer", "Consumer\Consumer.csproj", "{D009A15E-9923-48A8-8C59-B81CB9F9463B}"
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SequenceProducer", "SequenceProducer\SequenceProducer.csproj", "{CD33B06C-8BBB-4F80-96F3-C2139C2F861A}"
 EndProject
