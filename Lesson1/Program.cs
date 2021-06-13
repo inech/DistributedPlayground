@@ -1,17 +1,20 @@
 ﻿using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
+using System.Threading;
+using System.Threading.Tasks;
 using Confluent.Kafka;
 using Shared;
 
 Console.WriteLine("Program started");
 
-Consume(SharedConstants.TopicName, DateTime.UtcNow.ToFileTimeUtc().ToString());
+await ConsumeAsync(SharedConstants.TopicName, DateTime.UtcNow.ToFileTimeUtc().ToString(), 2);
 
 Console.WriteLine("Program Finished");
 
-static void Consume(string topicName, string groupId)
+static async Task ConsumeAsync(string topicName, string groupId, int concurrency)
 {
     var sw = Stopwatch.StartNew();
     
@@ -31,69 +34,155 @@ static void Consume(string topicName, string groupId)
         .Build();
     consumer.Subscribe(topicName);
 
-    var messageCount = 0;
+    var distributor = new Distributor(concurrency);
+    distributor.StartProcessing();
 
-    var pendingOffsets = new SortedSet<long>();
-    var users = new Dictionary<long, User>();
+    Console.WriteLine("Processing started");
+    
     while (true)
     {
         var result = consumer.Consume();
         if (result.IsPartitionEOF)
         {
+            Console.WriteLine("End of partition reached");
             break;
         }
-  
-        messageCount++;
-
-        var userId = result.Message.Key;
-        var kafkaAccountOperation = new KafkaAccountOperation(result.Message.Value, result.Offset);
-        Console.WriteLine($"#{messageCount}: U({userId}) SN({kafkaAccountOperation.Operation.SequenceNumber})");
-
-        lock (pendingOffsets)
-        {
-            pendingOffsets.Add(kafkaAccountOperation.Offset);
-        }
-
-        // Get user or create new one
-        if (!users.TryGetValue(userId, out var user))
-        {
-            users[userId] = user = new User();
-        }
         
-        lock (pendingOffsets)
-        {
-            user.UpdateBalance(kafkaAccountOperation);
-            pendingOffsets.Remove(kafkaAccountOperation.Offset);
-        }
-
-        lock (pendingOffsets)
-        {
-            long offsetToStore;
-            // If we have pending offsets store as far as we can go (smallest offset)
-            if (pendingOffsets.Any())
-            {
-                offsetToStore = pendingOffsets.First();
-            }
-            // If no offsets pending we can store offset of the latest message plus 1 (meaning current message was read as well)
-            else
-            {
-                offsetToStore = result.Offset + 1;
-            }
-            
-            consumer.StoreOffset(new TopicPartitionOffset(topicName, new Partition(0), offsetToStore));
-        }
+        var operation = new KafkaAccountOperation(result.Message.Key, result.Message.Value, result.Offset);
+        distributor.Distribute(operation);
     }
     
     consumer.Close();
 
+    await distributor.StopGracefullyAsync();
+    
+    distributor.PrintResult();
+    
     sw.Stop();
-    Console.WriteLine($"Consumed {messageCount} messages in {sw.Elapsed}");
+    Console.WriteLine($"Finished in {sw.Elapsed}");
+}
 
-    Console.WriteLine("Printing result:");
-    foreach (var userId in users.Keys.OrderBy(id => id))
+internal class Distributor
+{
+    private readonly Actor[] _actors;
+
+    public Distributor(int concurrency)
     {
-        var user = users[userId];
-        Console.WriteLine($"U({userId}) SN({user.Balance.SequenceNumber}) K({user.Balance.KafkaOffset})");
+        _actors = Enumerable.Range(0, concurrency).Select(_ => new Actor()).ToArray();
+    }
+
+    public void Distribute(KafkaAccountOperation kafkaAccountOperation)
+    {
+        var actorIndex = kafkaAccountOperation.UserId % _actors.Length; // In production would be uniform hashing algo
+        _actors[actorIndex].EnqueueOperation(kafkaAccountOperation);
+    }
+
+    public void StartProcessing()
+    {
+        foreach (var actor in _actors)
+        {
+            actor.StartProcessing();
+        }
+    }
+
+    public async Task StopGracefullyAsync()
+    {
+        await Task.WhenAll(_actors
+            .Select(a => a.FinishQueueAndStopAsync())
+            .ToArray()
+        );
+    }
+
+    public void PrintResult()
+    {
+        foreach (var actor in _actors)
+        {
+            actor.PrintResult();
+        }
+    }
+}
+
+internal class Actor
+{
+    private readonly Dictionary<long, User> _users = new();
+    private readonly ConcurrentQueue<KafkaAccountOperation> _operationsQueue = new();
+    private readonly CancellationTokenSource _cancellationTokenSource = new();
+    private Task? _runningTask;
+
+    public void EnqueueOperation(KafkaAccountOperation kafkaAccountOperation) => 
+        _operationsQueue.Enqueue(kafkaAccountOperation);
+    
+    public void StartProcessing()
+    {
+        _runningTask = Task.Factory.StartNew(ProcessLoop, TaskCreationOptions.LongRunning);
+    }
+
+    private void ProcessLoop()
+    {
+        while (true)
+        {
+            _operationsQueue.TryDequeue(out var kafkaAccountOperation);
+            if (kafkaAccountOperation != null)
+            {
+                try
+                {
+                    Process(kafkaAccountOperation);
+                }
+                catch (Exception e)
+                {
+                    Console.WriteLine(e);
+                    Thread.Sleep(TimeSpan.FromMilliseconds(10));
+                }
+            }
+            else
+            {
+                if (!_cancellationTokenSource.Token.IsCancellationRequested)
+                {
+                    Thread.Sleep(TimeSpan.FromMilliseconds(10));
+                }
+                else
+                {
+                    return;
+                }
+            }
+        }
+    }
+
+    private void Process(KafkaAccountOperation kafkaAccountOperation)
+    {
+        // Get user or create new one
+        if (!_users.TryGetValue(kafkaAccountOperation.UserId, out var user))
+        {
+            _users[kafkaAccountOperation.UserId] = user = new User();
+        }
+
+        user.UpdateBalance(kafkaAccountOperation);
+
+        // TODO: Remove pending offset
+        // lock (pendingOffsets)
+        // {
+        //     pendingOffsets.Remove(kafkaAccountOperation.Offset);
+        // }
+    }
+
+    public async Task FinishQueueAndStopAsync()
+    {
+        if (_runningTask == null)
+        {
+            throw new Exception("Actor is not running.");
+        }
+        
+        _cancellationTokenSource.Cancel();
+        await _runningTask;
+    }
+
+    public void PrintResult()
+    {
+        Console.WriteLine($"Actor results:");
+        foreach (var (userId, user) in _users.OrderBy(kv => kv.Key))
+        {
+            Console.WriteLine($"U({userId}) SN({user.Balance.SequenceNumber}) K({user.Balance.KafkaOffset})");
+        }
     }
 }
 
@@ -103,37 +192,31 @@ internal class User
 
     public void UpdateBalance(KafkaAccountOperation kafkaAccountOperation)
     {
-        var (accountOperation, offset) = kafkaAccountOperation;
-        
-        if (offset > Balance.KafkaOffset)
+        if (kafkaAccountOperation.Offset > Balance.KafkaOffset)
         {
             var expectedSequenceNumber = Balance.SequenceNumber + 1;
-            if (accountOperation.SequenceNumber != expectedSequenceNumber)
+            if (kafkaAccountOperation.Operation.SequenceNumber != expectedSequenceNumber)
             {
                 throw new InconsistencyException(
-                    $"Expected to have sequence {expectedSequenceNumber} but instead {accountOperation.SequenceNumber}");
+                    $"Expected to have sequence {expectedSequenceNumber} but instead {kafkaAccountOperation.Operation.SequenceNumber}");
             }
             
-            Balance = new UserBalance(accountOperation.SequenceNumber, offset);
+            // Simulate heavy operation
+            Thread.Sleep(TimeSpan.FromSeconds(kafkaAccountOperation.Operation.Complexity) / 2);
+            
+            Balance = new UserBalance(kafkaAccountOperation.Operation.SequenceNumber, kafkaAccountOperation.Offset);
         }
         else
         {
             Console.WriteLine($"Idempotency guard: replay detected. Balance Kafka Offset {Balance.KafkaOffset}, " +
-                              $"received offset {offset}.");
+                              $"received offset {kafkaAccountOperation.Offset}.");
         }
-    }
-
-    private readonly Queue<KafkaAccountOperation> _pendingKafkaAccountOperations = new();
-
-    public void EnqueueOperation(KafkaAccountOperation kafkaAccountOperation)
-    {
-        _pendingKafkaAccountOperations.Enqueue(kafkaAccountOperation);
     }
 }
 
 internal record UserBalance(int SequenceNumber, long KafkaOffset); // TODO: Kafka offset when multiple partitions with re-balance?
 
-internal record KafkaAccountOperation(AccountOperation Operation, long Offset);
+internal record KafkaAccountOperation(long UserId, AccountOperation Operation, long Offset);
 
 internal class InconsistencyException : Exception
 {
