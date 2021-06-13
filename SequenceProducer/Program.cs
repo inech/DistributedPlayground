@@ -7,7 +7,7 @@ Console.WriteLine("Program started");
 await KafkaUtils.EmptyTopicAsync(SharedConstants.TopicName);
 
 var userAccountOperations = 
-    DataGenerator.GenerateUserAccountOperations(2, 4, 10);
+    DataGenerator.GenerateUserAccountOperations(20, 4, 5);
 
 KafkaUtils.ProduceTestData(SharedConstants.TopicName, userAccountOperations);
 

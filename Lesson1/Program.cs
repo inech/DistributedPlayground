@@ -10,7 +10,7 @@ using Shared;
 
 Console.WriteLine("Program started");
 
-await ConsumeAsync(SharedConstants.TopicName, DateTime.UtcNow.ToFileTimeUtc().ToString(), 2);
+await ConsumeAsync(SharedConstants.TopicName, DateTime.UtcNow.ToFileTimeUtc().ToString(), 20);
 
 Console.WriteLine("Program Finished");
 
@@ -181,6 +181,8 @@ internal class Distributor
         if (offsetToCommit != null)
         {
             kafkaConsumer.StoreOffset(new TopicPartitionOffset(topicName, new Partition(0), offsetToCommit.Value)); // TODO: Only single partition
+
+            Console.WriteLine($"[Verbose] Store offset ({offsetToCommit})");
         }
         
         _informationLastStoredOffset = offsetToCommit;
@@ -316,10 +318,12 @@ internal class User
                     $"Expected to have sequence {expectedSequenceNumber} but instead {kafkaAccountOperation.Operation.SequenceNumber}");
             }
             
-            // Simulate heavy operation
-            Thread.Sleep(TimeSpan.FromSeconds(kafkaAccountOperation.Operation.Complexity) / 2);
+            // Simulate heavy operations
+            Thread.Sleep(TimeSpan.FromSeconds(kafkaAccountOperation.Operation.Complexity));
             
             Balance = new UserBalance(kafkaAccountOperation.Operation.SequenceNumber, kafkaAccountOperation.Offset);
+            
+            Console.WriteLine($"[Verbose] Processed U({kafkaAccountOperation.UserId}) SN({kafkaAccountOperation.Operation.SequenceNumber}) KafkaOffset({kafkaAccountOperation.Offset})");
         }
         else
         {
