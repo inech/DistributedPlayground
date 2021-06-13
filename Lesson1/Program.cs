@@ -44,9 +44,10 @@ static void Consume(string topicName, string groupId)
         }
         
         messageCount++;
-        
-        var (userId, accountOperation) = (result.Message.Key, result.Message.Value);
-        Console.WriteLine($"#{messageCount}: U({userId}) SN({accountOperation.SequenceNumber})");
+
+        var userId = result.Message.Key;
+        var kafkaAccountOperation = new KafkaAccountOperation(result.Message.Value, result.Offset);
+        Console.WriteLine($"#{messageCount}: U({userId}) SN({kafkaAccountOperation.Operation.SequenceNumber})");
 
         // Get user or create new one
         if (!users.TryGetValue(userId, out var user))
@@ -54,7 +55,7 @@ static void Consume(string topicName, string groupId)
             users[userId] = user = new User();
         }
         
-        user.UpdateBalance(accountOperation, result.Offset);
+        user.UpdateBalance(kafkaAccountOperation);
     }
     
     consumer.Close();
@@ -74,28 +75,39 @@ internal class User
 {
     public UserBalance Balance { get; private set; } = new UserBalance(0, -1);
 
-    public void UpdateBalance(AccountOperation operation, long kafkaOffset)
+    public void UpdateBalance(KafkaAccountOperation kafkaAccountOperation)
     {
-        if (kafkaOffset > Balance.KafkaOffset)
+        var (accountOperation, offset) = kafkaAccountOperation;
+        
+        if (offset > Balance.KafkaOffset)
         {
             var expectedSequenceNumber = Balance.SequenceNumber + 1;
-            if (operation.SequenceNumber != expectedSequenceNumber)
+            if (accountOperation.SequenceNumber != expectedSequenceNumber)
             {
                 throw new InconsistencyException(
-                    $"Expected to have sequence {expectedSequenceNumber} but instead {operation.SequenceNumber}");
+                    $"Expected to have sequence {expectedSequenceNumber} but instead {accountOperation.SequenceNumber}");
             }
             
-            Balance = new UserBalance(operation.SequenceNumber, kafkaOffset);
+            Balance = new UserBalance(accountOperation.SequenceNumber, offset);
         }
         else
         {
             Console.WriteLine($"Idempotency guard: replay detected. Balance Kafka Offset {Balance.KafkaOffset}, " +
-                              $"received offset {kafkaOffset}.");
+                              $"received offset {offset}.");
         }
+    }
+
+    private readonly Queue<KafkaAccountOperation> _pendingKafkaAccountOperations = new();
+
+    public void EnqueueOperation(KafkaAccountOperation kafkaAccountOperation)
+    {
+        _pendingKafkaAccountOperations.Enqueue(kafkaAccountOperation);
     }
 }
 
 internal record UserBalance(int SequenceNumber, long KafkaOffset); // TODO: Kafka offset when multiple partitions with re-balance?
+
+internal record KafkaAccountOperation(AccountOperation Operation, long Offset);
 
 internal class InconsistencyException : Exception
 {
