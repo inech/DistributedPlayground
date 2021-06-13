@@ -15,7 +15,8 @@ static void Consume(string topicName, string groupId)
     {
         BootstrapServers = SharedConstants.BootstrapServers,
         GroupId = groupId,
-        AutoOffsetReset = AutoOffsetReset.Earliest
+        AutoOffsetReset = AutoOffsetReset.Earliest,
+        EnablePartitionEof = true
     };
 
     using var consumer = new ConsumerBuilder<long, AccountOperation>(consumerConfig)
@@ -31,6 +32,11 @@ static void Consume(string topicName, string groupId)
     while (true)
     {
         var result = consumer.Consume();
+        if (result.IsPartitionEOF)
+        {
+            break;
+        }
+        
         messageCount++;
         
         var (userId, accountOperation) = (result.Message.Key, result.Message.Value);
@@ -42,5 +48,4 @@ static void Consume(string topicName, string groupId)
     sw.Stop();
     Console.WriteLine($"Consumed {messageCount} messages in {sw.Elapsed}");
 }
-
 
