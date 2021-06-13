@@ -52,10 +52,10 @@ static async Task ConsumeAsync(string topicName, string groupId, int concurrency
         distributor.Distribute(operation);
     }
     
-    consumer.Close();
-
     await distributor.StopGracefullyAsync();
     
+    consumer.Close();
+
     distributor.PrintResult();
     
     sw.Stop();
