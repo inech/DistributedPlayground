@@ -78,8 +78,11 @@ internal class Actor
             _users[kafkaAccountOperation.UserId] = user;
         }
 
-        user.UpdateBalance(kafkaAccountOperation, _actorIndex);
-        await _userStore.SaveUserBalanceAsync(kafkaAccountOperation.UserId, user.Balance);
+        var updated = user.UpdateBalance(kafkaAccountOperation, _actorIndex);
+        if (updated)
+        {
+            await _userStore.SaveUserBalanceAsync(kafkaAccountOperation.UserId, user.Balance);
+        }
         
         _offsetManager.MessageProcessed(kafkaAccountOperation.Offset);
     }

@@ -15,8 +15,8 @@ internal class User
     
     public UserBalance Balance { get; private set; }
 
-    // Returns last offset
-    public void UpdateBalance(KafkaAccountOperation kafkaAccountOperation, int actorIndex)
+    // Returns whether was updated (true) or replay
+    public bool UpdateBalance(KafkaAccountOperation kafkaAccountOperation, int actorIndex)
     {
         if (kafkaAccountOperation.Offset > Balance.KafkaOffset)
         {
@@ -33,11 +33,14 @@ internal class User
             Balance = new UserBalance(kafkaAccountOperation.Operation.SequenceNumber, kafkaAccountOperation.Offset, DateTime.UtcNow);
             
             Console.WriteLine($"[{DateTime.UtcNow:hh:mm:ss:fff}] [Verbose] Processed Actor({actorIndex:000}) U({kafkaAccountOperation.UserId:000}) SN({kafkaAccountOperation.Operation.SequenceNumber:000}) KafkaOffset({kafkaAccountOperation.Offset:000000})");
+
+            return true;
         }
         else
         {
             Console.WriteLine($"Idempotency guard: replay detected. Balance Kafka Offset {Balance.KafkaOffset}, " +
                               $"received offset {kafkaAccountOperation.Offset}.");
+            return false;
         }
     }
 }

@@ -6,7 +6,7 @@ using Confluent.Kafka;
 using Shared;
 
 //var groupId = DateTime.UtcNow.ToFileTimeUtc().ToString();
-var groupId = "g1";
+var groupId = "g2";
 
 Console.WriteLine($"Program started for group {groupId}");
 
