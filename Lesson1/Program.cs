@@ -72,7 +72,10 @@ internal class OffsetManager
     {
         lock (_lock)
         {
-            _unprocessedOffsets.Add(offset);
+            if (!_unprocessedOffsets.Add(offset))
+            {
+                Console.WriteLine($"Weird condition. Trying to add offset which already exists {offset}");
+            }
         }
     }
 
@@ -80,7 +83,10 @@ internal class OffsetManager
     {
         lock (_lock)
         {
-            _unprocessedOffsets.Remove(offset);
+            if (!_unprocessedOffsets.Remove(offset))
+            {
+                Console.WriteLine($"Weird condition. Trying to remove offset which doesn't exist {offset}");
+            }
 
             _biggestProcessedOffset = _biggestProcessedOffset == null
                 ? offset
@@ -122,6 +128,7 @@ internal class Distributor
     private readonly OffsetManager _offsetManager = new();
     private readonly CancellationTokenSource _ctsStoreOffset = new();
     private Task _storeOffsetTask;
+    private long? _informationLastStoredOffset;
 
     public Distributor(int concurrency)
     {
@@ -174,6 +181,8 @@ internal class Distributor
         {
             kafkaConsumer.StoreOffset(new TopicPartitionOffset(topicName, new Partition(0), offsetToCommit.Value)); // TODO: Only single partition
         }
+        
+        _informationLastStoredOffset = offsetToCommit;
     }
 
     public async Task StopGracefullyAsync()
@@ -189,6 +198,7 @@ internal class Distributor
 
     public void PrintResult()
     {
+        Console.WriteLine($"Last stored offset: {_informationLastStoredOffset}");
         foreach (var actor in _actors)
         {
             actor.PrintResult();
@@ -211,8 +221,8 @@ internal class Actor
     
     public void EnqueueOperation(KafkaAccountOperation kafkaAccountOperation)
     {
-        _offsetManager.MessageLoaded(kafkaAccountOperation.Offset);
         _operationsQueue.Enqueue(kafkaAccountOperation);
+        _offsetManager.MessageLoaded(kafkaAccountOperation.Offset);
     }
 
     public void StartProcessing()
@@ -233,8 +243,12 @@ internal class Actor
                 }
                 catch (Exception e)
                 {
+                    // TODO: If processing thrown error
+                    // it'll never be able to get into consistent state due to missing message in sequence.
+
                     Console.WriteLine(e);
                     Thread.Sleep(TimeSpan.FromMilliseconds(10));
+                    
                 }
             }
             else
